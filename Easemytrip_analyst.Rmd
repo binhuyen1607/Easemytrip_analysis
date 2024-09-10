@@ -1,0 +1,1316 @@
+---
+title: "Phân tích sự lựa chọn hạng vé của khách hàng trên nền tảng EaseMy Trip"
+date: "`r format(Sys.time(), '%H:%M:%S, %d - %m - %Y')`"
+output:
+  bookdown::html_document2:
+    toc: true
+    number_sections: true
+    toc_float:
+      collapsed: true
+    css: "tieuluan.css"
+    code_folding: show
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# **Mục tiêu bài nghiên cứu**
+
+Mục đích của nghiên cứu này là phân tích sự lựa chọn hạng vé bao gồm hạng thương gia và hạng phổ thông của khách hàng khi đặt vé máy bay trên trang web EaseMy Trip. Bằng cách thu thập và phân tích các thông tin liên quan đến giá vé, tên chuyến bay, nơi khởi hành, điểm đến, thời gian khởi hành, và các yếu tố khác. Nghiên cứu nhằm đưa ra các thông tin hữu ích giúp cải thiện dịch vụ của EaseMy Trip và có thể áp dụng cho các doanh nghiệp khác trong ngành du lịch và hàng không.
+
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(readxl)
+library(DT)
+library(DescTools)
+library(epitools)
+library(scales)
+library(car)
+library(glmnet)
+library(caret)
+library(pROC)
+data <- read.csv("D:/Phantichdulieudinhtinh/Easymytrip.csv")
+df <- data
+str(df)
+head(df,6)
+
+```
+
+# **Mô tả bộ dữ liệu**:
+
+'EaseMy Trip' là một nền tảng internet để đặt vé máy bay. Dữ liệu được thu thập chia thành 2 nhóm vé: một nhóm dành cho vé hạng phổ thông và nhóm còn lại dành cho vé hạng thương gia. Tổng cộng có 300153 thông tin đặt vé máy bay riêng biệt được trích xuất từ trang web. Dữ liệu được thu thập trong 50 ngày, từ ngày 11 tháng 2 đến ngày 31 tháng 3 năm 2022.
+
+_Biến định lượng_
+
+- Duration: Khoảng thời gian chuyến bay di chuyển (được tính bằng giờ)
+
+- Days Left: Chênh lệch giữa thời gian bay và thời gian đặt vé
+
+- Price: Giá vé
+
+_Biến định tính_
+
+- Airline: Tên của hãng hàng không, gồm có 6 hãng hàng không
+
+- Flight: Mã chuyến bay
+
+- Source City: Thành phố nơi chuyến bay cất cánh
+
+- Departure Time: Khoảng thời gian chuyến bay khởi hành
+
+- Stops: Số điểm dừng chân.
+
+- Arrival Time: Khoảng thời gian chuyến bay hạ cánh
+
+- Destination City: Thành phố nơi chuyến bay hạ cánh
+
+- Class: Hạng ghế mà khách hàng lựa chọn. Có 2 hạng ghế là hạng phổ thông và hạng thương gia
+
+
+
+
+# **Đặt vấn đề**
+
+Trong ngành hàng không, chúng ta cần phải hiểu rõ hành vi và nhu cầu của khách hàng để có thể tối ưu hoá các dịch vụ, nâng cao doanh thu và trải nghiệm của khách hàng. Một trong những yếu tố quan trọng trong ngành hàng không là dự đoán được xác suất khách hàng chọn hạng vé thương gia để kịp thời đưa ra các chương trình đáp ứng cho nhu cầu của họ.
+
+- Biến phụ thuộc (biến được giải thích): Class (Gồm 2 biểu hiện: Business và Economy)
+
+- Biến giải thích: 
+
+**Source City**: Kinh tế thị trường ở các thành phố có thể ảnh hưởng đến xác suất chọn hạng vé thương gia của khách hàng, ở những thành phố có nền kinh tế phát triển thì dự đoán nhu cầu chọn hạng vé thương gia của khách hàng có thể lớn hơn so với những thành phố có nền kinh tế ít phát triển.
+
+**Airline**: Mỗi hãng hàng không có chất lượng dịch vụ và giá cả khách nhau. Ví dụ, những hãng hàng không mang thương hiệu lớn thì tỷ lệ chọn vé hạng thương gia sẽ cao hơn.
+
+**Price**: Theo dự đoán thì mức giá là một yếu tố quan trọng ảnh hưởng đến lựa chọn hạng vé của khách hàng. Từng phân khúc khách hàng sẽ lựa chọn hạng vé phù hợp với nhu cầu và khả năng chi trả của họ.
+
+**Stop_ans**: Giả thiết số điểm dừng của chuyến bay cũng có ảnh hưởng đến hành vi lựa chọn hạng vé của khách hàng. Những khách hàng chọn hạng vé thương gia thường sẽ chú trọng vào dịch vụ của chuyến bay hơn so với khách hàng chọn hạng vé phổ thông. Những chuyến bay có điểm dừng thường gây ra những rắc rối về việc chuyển hành lý và mất thời gian hơn, nên dự đoán xác suất chọn hạng vé thương gia ở những chuyến bay không có điểm dừng sẽ cao hơn so với những chuyến bay có điểm dừng.
+
+**Day_left**: Thời gian đặt vé trước chuyến bay cũng có thể ảnh hưởng đến lựa chọn hạng vé của khách hàng. Đối với những chuyến bay có thời gian đặt vé sớm, thì sẽ có nhiều lựa chọn về giá cả, dịch vụ hoặc hạng ghế. Nhưng đối với những chuyến bay đặt quá gần ngày bay thì sẽ có những hạn chế, ví dụ như hết vé hạng phổ thông.
+
+**Duration**: Thời gian bay cũng là một trong những yếu tố quan trọng ảnh hưởng tới hành vi lựa chọn hạng vé của khách hàng. Đối với những chuyến bay dài thì khách hàng sẽ có xu hướng lựa chọn hạng vé thương gia để đảm bảo về dịch vụ và sự thoải mái.
+
+
+# **Xử lý dữ liệu**
+
+
+**Phân tổ giá của mỗi chuyến bay thành 2 biểu hiện: Thấp và Cao**
+
+- Dựa vào giá trị trung bình của giá trong mẫu được chọn. Giá thấp hơn 20890 được gán với biểu hiện "Thấp", giá cao 20890 được gán với biểu hiện "Cao".
+
+```{r}
+str(df)
+summary(df$price)
+df$price_level <- cut(df$price, breaks = c(0, 20890, 123071), labels = c("Thap", "Cao"))
+str(df$price_level)
+```
+
+**Phân tổ thời gian đặt vé trước chuyến bay thành 2 biểu hiện "sớm","Muộn"**
+
+- Dựa vào giá trị trung bình của thời gian đặt vé trước chuyến bay của mẫu được chọn. Thời gian thấp hơn 26 ngày  được gán với biểu hiện "Muộn", thời gian cao hơn 26 ngày được gán với biểu hiện "Sớm".
+
+```{r}
+df$dayleft_level <- cut(df$days_left, breaks = c(0, 26, 50), labels = c("Muộn", "Sớm"))
+str(df$dayleft_level)
+summary(df$dayleft_level)
+
+```
+**Phân tổ thời gian di chuyển của chuyến bay thành 2 biểu hiện "Cao","Thấp"**
+
+- Dựa vào giá trị trung bình của thời gian bay. Thời gian thấp hơn 12.22 tiếng được gán với biểu hiện "Thấp", thời gian cao hơn 12.22 tiếng ngày được gán với biểu hiện "Cao".
+
+```{r}
+df$duration_level <- cut(df$duration, breaks = c(0, 12.22, 50), labels = c("Thấp", "Cao"))
+str(df$duration_level)
+summary(df$duration_level)
+```
+
+
+# **Thống kê mô tả 1 biến**
+
+Trong phần này, chúng tôi thực hiện thống kê mô tả cho dữ liệu bao gồm dữ liệu định tính và dữ liệu định lượng. Đối với dữ liệu định tính, thực hiện lập bảng tần số, bảng tần suất và vẽ đồ thị. Đối với dữ liệu định lượng, thực hiện thống kê các đặc trưng đo lường.
+
+## **Thống kê mô tả biến định tính**
+
+### **Thống kê mô tả biến class**
+
+Đầu tiên, thực hiện thống kê mô tả cho biến Class thể hiện hạng vé mà khách hàng lựa chọn. Bao gồm hai biểu hiện là hạng ghế phổ thông và hạng ghế thương gia. Đây cũng chính là biến được giải thích trong bài nghiên cứu.
+
+```{r}
+tmp <- table(df$class)
+addmargins(tmp)
+round((table(df$class)/sum(table(df$class))*100),2)
+df %>% ggplot(map = aes(x=fct_infreq(class), y= after_stat(count)))+geom_bar(fill = 'skyblue')+geom_text(aes(label=percent(after_stat(count/sum(count)),accuracy = .01)), stat = 'count', color = 'black',vjust = 2) + labs(x = 'Hạng ghế',y="số lượng", title="Phân chia số lượng vé theo từng hạng ghế")+theme_minimal()
+```
+
+Trong số 300153 vé máy bay:
+
+- Số người đặt hạng ghế phổ thông có 206666 vé, chiếm 68,85%
+
+- Số người đặt hạng ghế thương gia có 93487 vé, chiếm 31,15%
+
+Như vậy, số người đặt vé hạng ghế phổ thông nhiều hơn 113179 (Khoảng 37,71%) so với số người sở hữu vé là hạng ghế thương gia.
+
+### **Thống kê mô tả biến airline**
+
+Biến airline là biến đại diện cho các hãng hàng không. Có 6 hãng hàng không trong bài nghiên cứu này.
+
+```{r}
+tmp1 <- table(df$airline)
+addmargins(tmp1)
+```
+
+
+```{r}
+round((table(df$airline)/sum(table(df$airline))*100),2)
+df %>% ggplot(map = aes(x=fct_infreq(airline), y= after_stat(count)))+geom_bar(fill = 'salmon')+geom_text(aes(label=percent(after_stat(count/sum(count)),accuracy = .01)), stat = 'count', color = 'black',vjust = 1) + labs(x = 'Hãng hàng không',y="số lượng", title="Phân chia số lượng vé theo từng hãng hàng không")+theme_minimal()
+
+```
+
+Thống kê cho thấy trong số 300153 vé máy bay được bán ra sắp xếp theo thứ tự tăng dần, ta có thể thấy rằng hãng hàng không Vistara chiếm tỷ lệ cao nhất và hãng Spicejet chiếm tỷ lệ thấp nhất cụ thể như sau:
+
+- Hãng hàng không Vistara có 127859 vé chiếm tỷ lệ là 42.6%
+
+- Hãng hàng không Air_India có 80892 vé chiếm tỷ lệ là 26.95%
+
+- Hãng hàng không Indigo có 43120 vé chiếm tỷ lệ là 14.37%
+
+- Hãng hàng không GO_FIRST có 23173 vé chiếm tỷ lệ là 7.72%
+
+- Hãng hàng không AirAsia có 16098 vé chiếm tỷ lệ là 5.36%
+
+- Hãng hàng không SpiceJet có 9011 vé chiếm tỷ lệ là 3%
+
+### **Thống kê mô tả biến source_city **
+
+```{r}
+source_frequency <- table(df$source_city)
+addmargins(source_frequency)
+round((table(df$source_city)/sum(table(df$source_city))*100),2)
+df %>% ggplot(map = aes(x=fct_infreq(source_city), y=after_stat(count)))+geom_bar(fill='skyblue')+geom_text(aes(label=percent(after_stat(count/sum(count)),accuracy = .01)), stat = 'count', color = 'black',vjust = 2) + labs(x = 'Thành phố khởi hành', y = 'Số lượng', title = "Số lượng chuyến bay tương ứng với từng thành phố mà chuyến bay khởi hành")+theme_minimal()
+```
+
+Trong số 300153 thông tin về điểm khởi hành của các chuyến bay, thành phố có chuyến bay khởi hành nhiều nhất là Delhi và thành phố có chuyến bay khỏi hành ít nhất là Chennai, cụ thể như sau:
+
+- Số lượng chuyến bay ở Delhi là 52061, chiếm 20,44% tổng chuyến bay.
+
+- Số lượng chuyến bay ở Mumbai là 60896 , chiếm 20,29% tổng số chuyến bay
+
+- Số lượng chuyến bay ở Bangalore là  52061 , chiếm 17,34% tổng số chuyến bay
+
+- Số lượng chuyến bay ở Kolkata là 46347 , chiếm 15,44% tổng số chuyến bay
+
+- Số lượng chuyến bay ở Hyderabad là 40806, chiếm 13,60% tổng số chuyến bay
+
+- Số lượng chuyến bay ở Chennai là 38700, chiếm 12,89% tổng số chuyến bay.
+
+Nhận xét: Qua biểu đồ này, chúng ta có thể thấy rõ ràng rằng Delhi và Mumbai là hai trung tâm hàng không lớn nhất, trong khi các thành phố khác như Bangalore, Kolkata, Hyderabad, và Chennai có số lượng chuyến bay ít hơn đáng kể.
+
+### **Thống kê mô tả biến stops**
+
+```{r}
+df$stops <- factor(df$stops, levels =c("zero","one","two_or_more"))
+
+stops_frequency <- table(df$stops)
+addmargins(stops_frequency)
+round((table(df$stops)/sum(table(df$stops))*100),2)
+df %>% ggplot(map = aes(x=stops, y=after_stat(count)))+geom_bar(fill='violet')+geom_text(aes(label=percent(after_stat(count/sum(count)),accuracy = .01)), stat = 'count', color = 'black',vjust = 1.2) + labs(x = 'Số điểm dừng', y = 'Số lượng', title = "Số lượng chuyến bay tương ứng với số điểm dừng")+theme_minimal()
+```
+
+
+Trong tổng số 300153 thông tin về số điểm dừng của các chuyến bay
+
+- Đa số khách hàng lựa chọn chuyến bay có 1 điểm dừng và nó chiếm tới 83,58% so với tổng 300153 chuyến bay.
+
+- Số chuyến bay có 0 điểm dừng chiếm 12%.
+
+- Số chuyến bay có 2 hoặc nhiều hơn 2 điểm dừng chỉ chiếm 4,43%.
+
+Nhận xét: Đa số hành khách ưu tiên lựa chọn chuyến có 1 điểm dừng. Điều này có thể do các lý do như, chuyến bay dài nên cần phải có điểm dừng để hành khách mua thêm những thứ cần thiết hoặc khách hàng cần nghỉ ngơi giữa chuyến bay, nhưng để tiết kiệm thời gian, giảm thiểu rủi ro mất hành lý và hạn chế phiền toái khi chuyển giữa các chuyến bay thì khách hàng đa số chọn những chuyến bay có 1 điểm dừng thay vì những chuyến bay có 2 điểm dừng hoặc nhiều hơn. Có 12% khách hàng lựa chọn chuyến bay có 0 điểm dừng, có thể vì chuyến bay đó có thời gian di chuyển ngắn.Rất ít hành khách chọn chuyến bay có 2 hoặc nhiều hơn 2 điểm dừng. Những chuyến bay này thường kéo dài thời gian di chuyển, có thể gây mệt mỏi cho hành khách và tăng khả năng gặp sự cố.  
+
+## **Thống kê mô tả biến định lượng**
+
+### **Biến Price**
+
+Biến Price là biến thể hiện cho giá vé máy bay mà khách hàng đã mua, là một biến định lượng. Để mô tả cho biến này, ta thực hiện tính toán các đặc trưng đo lường:
+
+```{r}
+summary(df$price)
+var(df$price)
+sd(df$price)
+ggplot(df, aes(x = price)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.5) +
+  labs(x = "Giá vé máy bay", y="Mật độ", title="Biểu đồ phân phối của giá vé")+theme_minimal()
+```
+
+Từ kết quả trên, ta nhận thấy rằng:
+
+- Giá vé thấp nhất là 1105 ngàn đồng, giá vé cao nhất là 123071 ngàn đồng. Có khoảng cách giữa vé thấp nhất và vé cao nhất là rất lớn, cho thấy có sự đa dạng rất lớn trong giá vé.
+
+- Có 25% giá vé thấp hơn giá 4783 ngàn đồng, có 50% giá vé thấp hơn giá trị 7425 ngàn đồng, có 75% giá vé thấp hơn 42521 ngàn đồng. Phân phối giá vé lệch, phần lớn giá vé nằm dưới mức 42521 ngàn đồng.
+
+- Mức trung bình của giá vé là 20890 ngàn đồng, cao hơn giá trị trung vị. Điều này cho thấy rằng có một số giá trị rất cao kéo giá trị trung bình lên.
+
+- Nhìn vào phương sai của dữ liệu, Phương sai lớn cho thấy sự biến thiên lớn trong dữ liệu. Độ lệch chuẩn cao cũng phán ánh sự phân tán lớn xung quanh giá trị trung bình.
+
+### **Biến Days Left**
+
+```{r}
+summary(df$days_left)
+var(df$days_left)
+sd(df$days_left)
+```
+
+Trong 300513 người trong khảo sát cho biết thông tin về khoảng thời gian từ lúc đặt vé đén lúc đặt vé đến lúc bay như sau:
+ 
+- Thời gian từ lúc đặt vé đến khi bay của các hành khách ngắn nhất là một ngày và dài nhất là 49 ngày.
+
+- Thời gian đặt vé trước ngày bay trung bình từ các hành khách khảo sát được là 26 ngày.
+
+- 25% người trong nhóm trên đặt vé trước ngày bay 15 ngày 
+
+- 50% người trong nhóm khảo sát đặt vé trước ngày bay 26 ngày
+
+- 75% người trong nhóm đặt vé trước ngày bay 38 ngày
+
+- Độ lệch chuẩn của biến days-left là 13.561 cho biết mức đọ phân tán của thời gian từ ngày đặt vé đến ngày bay trong nhóm người khảo sát được so với giá trị trung bình là 13.561 ngày.
+ 
+```{r}
+ggplot(df, aes(x = days_left)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.5) +
+  labs(x = "thời gian đặt vé trước chuyến bay",y="Mật độ", title="Biểu đồ phân phối của thời gian đặt vé trước chuyến bay")+theme_minimal()
+```
+
+**Nhận xét**
+
+- Hình dạng phân bố: Mật độ phân bố có xu hướng gần như đều từ khoảng ngày thứ 10 đến ngày thứ 45 trước ngày bay. Điều này cho thấy nhiều người có xu hướng đặt vé trong khoảng thời gian này.
+
+- Đặt vé sớm: Số người đặt vé bắt đầu tăng mạnh từ khoảng [1;10] ngày cho thấy Có rất ít người đặt vé gần ngày bay.
+
+- Phân bố ổn định: Trong khoảng từ 10 ngày đến 45 ngày trước ngày bay, mật độ phân bố ổn định, cho thấy nhiều người có xu hướng đặt vé trong giai đoạn này, có thể do đây là khoảng thời gian tối ưu về giá cả 
+
+- Giảm mạnh sau ngày 45: Số người đặt vé giảm dần sau khoảng 45 ngày trước ngày bay. Có thể vì việc đặt vé quá xa trước ngày bay ít phổ biến hoặc ít người có kế hoạch cụ thể xa đến vậy.
+
+### **Biến Duration**
+ 
+```{r}
+summary(df$duration)
+var(df$duration)
+sd(df$duration)
+```
+Trong bộ dữ liệu khảo sát được ta có thông tin về thời gian bay như sau:
+
+- Chuyến bay ngắn nhất kéo dài 0.83 giờ tương đương với khoảng 50 phút 
+ 
+- chuyến bay dài nhất kéo dài 49.83 giờ tương đương với khoảng 2 ngày 1 giờ 50 phút
+ 
+- 25% chuyến bay kéo dài trong 6.83 giờ
+ 
+- 50% chuyến bay kéo dài trng 11.25 giờ
+ 
+- 75% chuyến bay kéo dài trong 16.17 giờ
+ 
+- Thời gian bay trung bình khảo sát được là 12.22 giờ
+ 
+```{r}
+ggplot(df, aes(x = duration)) +
+  geom_density(fill = "skyblue", color = "blue", alpha = 0.5) +
+  labs(x = "thời gian bay")+theme_minimal()
+
+```
+ 
+**Nhận xét**
+
+- Đỉnh cao ngay sát gần 0: Có một đỉnh rất cao ở khoảng thời gian ngắn nhất, cho thấy rằng phần lớn các chuyến bay kéo dài rất ngắn, có thể là các chuyến bay nội địa hoặc các chuyến bay chỉ kéo dài khoảng 2-3 giờ.
+
+- Giảm dần sau đỉnh đầu tiên: Sau đỉnh cao ban đầu, mật độ giảm dần nhưng vẫn có những đỉnh cao khác trong khoảng từ 6 đến 12 giờ. Điều này có thể biểu hiện cho các chuyến bay nội địa dài hơn hoặc các chuyến bay quốc tế ngắn.
+
+- Đỉnh nhỏ khoảng từ 14 đến 20 giờ: Có một đỉnh nhỏ từ khoảng thời gian 14 đến 20 giờ, cho thấy có một số chuyến bay kéo dài trong khoảng thời gian này, có thể là các chuyến bay quốc tế dài.
+
+- Giảm mạnh sau 20 giờ: Sau khoảng 20 giờ, mật độ giảm đáng kể, cho thấy rất ít chuyến bay kéo dài hơn 20 giờ. Điều này hợp lý vì hầu hết các chuyến bay quốc tế dài nhất thường không kéo dài hơn khoảng thời gian này.
+
+- Gần như không có chuyến bay kéo dài hơn 30 giờ: Từ khoảng 30 giờ trở đi, mật độ giảm xuống gần bằng 0, cho thấy rất ít hoặc không có chuyến bay nào kéo dài hơn khoảng thời gian này. Điều này có thể bao gồm các chuyến bay có nhiều điểm dừng hoặc các hành trình đặc biệt.
+
+=> Tóm lại, biểu đồ này cho thấy hầu hết các chuyến bay kéo dài dưới 10 giờ, với phần lớn các chuyến bay rất ngắn. Có một số ít chuyến bay kéo dài từ 10 đến 20 giờ, và rất hiếm có chuyến bay kéo dài hơn 20 giờ.
+
+
+# **Thống kê mô tả 2 biến**
+
+## **Biến Class và biến airline**
+
+```{r}
+addmargins(table(df$class, df$airline))
+
+prop.table(table(df$class, df$airline))
+
+prop.table(table(df$class, df$airline),margin = 2)
+
+```
+
+```{r}
+df %>% ggplot(aes(x = fct_infreq(airline), fill = class)) +
+  geom_bar(position = "dodge") +
+  geom_text(aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.01)), 
+            stat = "count", 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = 'black') +
+  scale_fill_manual(values = c("Economy" = "skyblue", "Business" = "brown")) + labs( fill = 'Hạng vé',title = "Số lượng chuyến bay có quá cảnh ở các hạng vé") + theme_minimal()
+```
+
+Nhìn vào bảng và đồ thị số lượng chuyến bay của các hãng hàng không theo hạng ghế, chúng ta có thể đưa ra một số nhận xét:
+
+- Vistara: Chiếm tỉ lệ cao nhất trong hạng Business (chiếm 20.19% trên tổng số vé) và cũng có tỉ lệ cao nhất trong hạng Economy (22.41%). Điều này cho thấy Vistara có sự phân phối đều hơn giữa hai hạng ghế so với các đối thủ khác.
+
+- Air_India: Chiếm tỉ lệ cao thứ hai trong hạng Business (10.96% trên tổng số vé), nhưng chỉ chiếm tỉ lệ cao thứ hai trong hạng Economy (15.99%).
+
+- AirAsia và GO_FIRST, Indigo và SpiceJet: Không được khách hàng ưa chuộng cho hạng Business, chỉ có trong hạng Economy. Điều này có thể cho thấy các hãng này chủ yếu cung cấp dịch vụ Economy và ít được người dùng chọn lựa trong hạng ghế cao cấp hơn.
+
+
+## **Biến Class và source_city**
+
+```{r}
+class_source <- table(df$class,df$source_city)
+addmargins(class_source)
+
+df %>% ggplot(aes(x = fct_infreq(source_city), fill = class)) +
+  geom_bar(position = "dodge") +
+  geom_text(aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.01)), 
+            stat = "count", 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = 'black') +
+  scale_fill_manual(values = c("Economy" = "skyblue", "Business" = "brown")) + labs(x = 'Thành phố', y = 'Số lượng', fill = 'Hạng vé',
+       title = "Số lượng chuyến bay tương ứng với hạng vé và thành phố xuất phát") + theme_minimal()
+
+```
+
+Trong tổng số 300153 quan sát
+
+- Đối với 61343 chuyến bay khởi hành ở Delhi, có 18316 hành khách chọn hạng vé thương gia, chiếm 6,1% so với tổng chuyến bay
+
+- Đối với 60896 chuyến bay khởi hành ở Mumbai, có 19858 hàng khách chọn hạng vé thương gia, chiếm 6,62% so với tổng chuyến bay
+
+- Đối với 52061 chuyến bay khởi hành ở Bangalore, có 16441 hành khách chọn hạng vé thương gia,chiếm 5,48% so với tổng chuyến bay
+
+- Đối với 46347 chuyến bay khởi hành ở Kolkata, có 13473 hành khách chọn hạng vé thương gia, chiếm 4,49% so với tổng chuyến bay
+
+- Đối với 40806 chuyến bay khởi hành ở Hyderabad, có 12870 hành khách chọn hạng vé thương gia, chiếm 4,29% so với tổng chuyến bay
+
+- Đối với 38700 chuyến bay khởi hành ở Chennai, có 12529 hành khách chọn hạng vé thương gia,chiếm 4,17% so với tổng chuyến bay
+
+Nhận xét: Nhìn vào kết quả trên ta thấy, mặc dù Delhi là thành phố có nhiều chuyến bay khởi hành nhất, tuy nhiên Mumbai là thành phố có nhiều hành khách chọn hạng vé thương gia nhất (chiếm 6,62% so với tổng chuyến bay). Số liệu trên cho thấy sự khác biệt rõ rệt trong hành vi chọn hạng vé của hành khách tại các thành phố khác nhau. Các thành phố lớn như Delhi và Mumbai có tỷ lệ hành khách chọn hạng vé thương gia cao hơn so với các thành phố nhỏ hơn. 
+
+## **Biến Class và duration **
+
+```{r}
+df %>% ggplot(aes(x = class , y = duration)) +
+   geom_boxplot(fill = "lightblue", color = "steelblue") +
+  labs(x = "Hạng vé", y = "Thời gian của chuyến bay", title = "Sự phân bố thời gian của chuyến bay theo từng hạng vé") +
+  theme_minimal()
+```
+
+
+Nhận xét: Nhìn vào đồ thị ta thấy, đối với hạng ghế thương gia, khoảng thời gian di chuyển của chuyến bay chủ yếu giao động từ khoảng 8-18h. Đối với hạng ghế phổ thông, khoảng thời gian di chuyển của chuyến bay chủ yếu giao động ở khoảng 2h-16h. Ta nhận ra khoảng thời gian di chuyển của chuyến bay đối với hạng ghế thương gia phân bổ ở khoảng cao hơn so với thời gian di chuyển của chuyến bay đối với hạng ghế phổ thông. Điều này nguyên nhân có thể do đối với các chuyến bay càng dài thì khách hàng sẽ có xu hướng chọn hạng ghế thương gia. Ở cả 2 hạng ghế thương gia và hạng ghế phổ thông đều có xuất hiện một số chuyến bay có khoảng thời gian di chuyển cao (giao động từ 30h - 50h).
+
+## **Biến class và stops_ans**
+
+```{r}
+df$stop_ans <- ifelse(df$stops == "zero", "no", "yes")
+addmargins(table(df$stop_ans,df$class))
+prop.table(table(df$stop_ans,df$class),margin=2)*100
+prop.table(table(df$stop_ans,df$class))*100
+```
+ Trong bộ dữ liệu thu thập được ta một số thông tin về việc quá cảnh ở các hành khách như sau:
+ 
+- Có 93487 hành khách có vé hạng thương gia chiếm khoảng hơn 31% số lượng hành khách trong tập dữ liệu. Trong đó có đến hơn 91.33% số hành khách có vé hạng thương gia có chuyến bay quá cảnh tại ít nhất một điểm dừng,chiếm khoảng 28,44% trên tổng số hành khách. Những hành khách ở hạng vé này nhưng không quá cảnh chỉ chiếm 8.66% lượng hành khách ở cùng hạng vé.
+- Có đến 206666 hành khách có chuyến bay hạng phổ thông, trong đó có khoảng 86.5% hành khách ở hạng vé này có quá cảnh tại ít nhất một điểm dừng và chiếm khoảng 59.56% trên tổng hành khách có trong danh sách. Ngoài ra số hành khách không quá cảnh ở hạng vé này chiếm khoảng 9.3% lượng khách hàng trong bộ dữ liệu.
+
+=> Đa phần là những hành khách có các chuyến bay quá cảnh, trong đó các hành khách có quá cảnh ở hạng phổ thông phổ biến hơn cả.
+
+
+
+```{r}
+df %>% ggplot(aes(x = fct_infreq(stop_ans), fill = class)) +
+  geom_bar(position = "dodge") +
+  geom_text(aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.01)), 
+            stat = "count", 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = 'black') +
+  scale_fill_manual(values = c("Economy" = "skyblue", "Business" = "brown")) + labs( fill = 'Hạng vé',title = "Số lượng chuyến bay có quá cảnh ở các hạng vé") + theme_minimal()
+```
+
+
+
+**Nhận xét**
+
+- Chuyến bay có quá cảnh phổ biến hơn: Tỷ lệ chuyến bay có quá cảnh cao hơn tỷ lệ chuyến bay không quá cảnh ở cả hai hạng vé.
+- Hạng vé phổ thông phổ biến hơn: Số lượng chuyến bay hạng phổ thông cao hơn nhiều so với số lượng chuyến bay hạng thương gia.
+- Việc chênh lệch trong số lượng hành khách ở hạng thương gia và hạng phổ thông cũng như có quá cảnh và không quá cảnh có thể giải thích bằng nhu cầu về vé giá rẻ ở khách hàng.
+ 
+### Relative Risk 
+ 
+```{r}
+
+df$stop_ans <- factor(df$stop_ans, levels = c("yes", "no"))   
+cls <- table(df$stop_ans,df$class)
+RelRisk(cls)
+addmargins(cls)
+```
+
+Với RR = 1.436452, cho thấy rằng xác suất chọn hạng vé thương gia ở những chuyến bay có quá cảnh gấp 1.436452 lần xác suất chọn hạng vé thương gia ở những chuyến bay không có quá cảnh.
+
+### OddRatio
+```{r}
+
+OddsRatio(cls)
+
+```
+ 
+OR = 1.644919 cho thấy rằng Odds của những chuyến bay có quá cảnh gấp 1.644919 lần odds của những chuyến bay không có quá cảnh. Điều này có thể phản ánh xu hướng của khách hàng khi họ đặt vé, có thể do các yếu tố như sự thoải mái hơn trong hành trình có quá cảnh với những chuyến bay này thường co thời gian bay dài.
+(Trong đó odds là xác suất của hạng vé thương gia trên xác suất của hạng vé phổ phông)
+
+## **Biến class và day_left**
+
+```{r}
+day<- cut(df$days_left,breaks = c(0,10.5,30.5,50),label=c('trễ','vừa','sớm'))
+df<-df%>%mutate(df,day)
+addmargins(table(df$class,df$day))
+prop.table(table(df$class,df$day))*100
+```
+
+```{r}
+df %>% na.omit() %>% count(class, day) %>% group_by(class) %>% mutate(pvi = n/sum(n)) %>% ggplot(aes(x=class,y=n,fill= day))+geom_col(position = 'dodge') + geom_text(aes(label = percent(pvi,accuracy = .01)), position = position_dodge(1), vjust = -0.5,color = 'black') + theme_classic()
+
+```
+
+Biến day_lesft được chia thành 3 nhóm gồm nhóm có thời gian đặt vé từ trễ (1-10 ngày), vừa(10-30 ngày), sớm (30-49 ngày).
+ 
+Từ đó bảng tần số và đồ thị vừa lập được ta có một số nhận xét sau:
+
+- Trong nhóm gồm 93221 người có vé hạng thương gia , chỉ có 16128 người đặt vé trễ tức từ 1-10 ngày trước ngày bay chiếm khoảng 17.3% số hành khách ở hạng vẽ thương gia và chỉ khoảng 5,41% trên tổng số người trong bộ dữ liệu. Những hành khách có thời gian đặt vé ở khoảng vừa và sớm có tỷ lệ xấp xỉ nhau ở khoảng hơn 40% và chiếm phần lớn trong nhóm vé này.
+- Trong nhóm vé hạng phổ thông gồm 205005 người, trong đó 31312 người (15.27%) trong nhóm này đặt vé trễ. Còn ở hai phân nhóm vừa và sớm còn lại có tỷ lệ xấp xỉ nhau và đều trên 40%.
+- Tỷ lệ ở ở ba phân nhóm "trễ, vừa, sớm" ở hai hạng vé có sự tương đồng rõ rệt
+
+
+## **Biến Class và biến Price**
+
+Đầu tiên để thực hiện được lập bảng tần số giữa để chỉ ra mối liên hệ giữa hạng ghế và giá vé, trước tiên phải tiến hành phân tổ giá và gán vào biến mới có tên là price_level.
+
+```{r}
+summary(df$price)
+df$price_level <- cut(df$price, breaks = c(0, 20890, 123071), labels = c("Thap", "Cao"))
+addmargins(table(df$price_level, df$class))
+prop.table(table(df$price_level, df$class), margin = 2) * 100
+```
+
+
+```{r}
+summary(df$price)
+df$price_level <- cut(df$price, breaks = c(0, 20890, 123071), labels = c("Thap", "Cao"))
+addmargins(table(df$price_level, df$class))
+prop.table(table(df$price_level, df$class), margin = 2) * 100
+
+
+df %>% ggplot(aes(x = fct_infreq(price_level), fill = class)) +
+  geom_bar(position = "dodge") +
+  geom_text(aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.01)), 
+            stat = "count", 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = 'black') +
+  scale_fill_manual(values = c("Economy" = "skyblue", "Business" = "brown")) + labs(fill = 'Hạng vé',title = "Số lượng chuyến bay theo từng mức giá vé") + theme_minimal() + xlab("Mức giá vé") + ylab("Số lượng")
+```
+
+Nhận xét:
+
+- Trong tất cả các vé hạng phổ thông, đa phần các vé máy bay có giá thấp, có 205235 vé có giá thấp chiếm 99.31%, trong khi đó hạng phổ thông có giá vé cao chỉ có 1431 chiếm 0.69%.
+
+- Trong 94487 hạng vé có ghế là thương gia, đa phần các vé máy banh có giá cao, có 93487 vé có giá trị cao chiếm 98.5%, trong khi đó hạng thương gia mà có vé rẻ chỉ có 1400 vé, chiếm 1.5%.
+
+# **Thống kê suy diễn**
+
+## **Kiểm định tính độc lập cho 2 biến định tính**
+
+### **Kiểm định tính độc lập cho biến Class và Airline**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Airline độc lập
+
+- $H_1$: Hai biến Class và Airline không độc lập
+
+```{r}
+chisq.test(table(df$class,df$airline))
+```
+
+Kết quả: p-value < 2.2e-16 nhỏ hơn rất nhiều so với mức ý nghĩa $\alpha(5\%)$. Nên ta bác bỏ giả thuyết $H_0$.
+
+Với mức ý nghĩa 5%, sự lựa chọn các hãng hàng không có ảnh hưởng đến quyết định chọn hạng vé máy bay của khách hàng.
+
+### **Kiểm định tính độc lập cho biến Class và Source_City**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Source_City độc lập
+
+- $H_1$: Hai biến Class và Source_City không độc lập
+
+
+```{r}
+chisq.test(table(df$class,df$source_city))
+```
+
+Kết quả: p-value < 2.2e-16 nhỏ hơn rất nhiều so với mức ý nghĩa $\alpha(5\%)$. Nên ta bác bỏ giả thuyết $H_0$.
+
+Với mức ý nghĩa 5%, thành phố nơi chuyến bay cất cánh có tác động đến quyết định chọn hạng vé máy bay của khách hàng.
+
+
+### **Kiểm định tính độc lập cho biến Class và Stops_ans**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Stops_ans độc lập
+
+- $H_1$: Hai biến Class và Stops_ans không độc lập
+
+```{r}
+chisq.test(table(df$class,df$stop_ans))
+
+```
+
+Kết quả p-value < 2.2e-16 nhỏ hơn rất nhiều so với mức ý nghĩa $\alpha(5\%)$. Nên ta bác bỏ $H_0$.
+
+Vì vậy với mức ý nghĩa 5%, ta kết luận số điểm dừng của chuyến bay có ảnh hưởng đến quyết định lựa chọn hạng ghế của khách hàng.
+
+### **Kiểm định tính độc lập cho biến Class và Price_level**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Price_level độc lập
+
+- $H_1$: Hai biến Class và Price_level không độc lập
+
+```{r}
+chisq.test(table(df$class,df$price_level))
+```
+
+Kết quả p-value < 2.2e-16, nhỏ hơn rất nhiều so với mức ý nghĩa $\alpha(5%)$. Nên ta bác bỏ $H_0$
+
+Vậy ta kết luận là sự lựa chọn hạng ghế của khách hàng có liên quan đến mức giá vé của chuyến bay.
+
+### **Kiểm định tính độc lập cho biến Class và Dayleft_level**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Dayleft_level độc lập
+
+- $H_1$: Hai biến Class và Dayleft_level không độc lập
+
+```{r}
+chisq.test(table(df$class,df$dayleft_level))
+```
+Kết quả p-value = 1.567e-06 < $\alpha(5\%)$ . Nên ta bác bỏ H0. Vậy ta kết luận, với mức ý nghĩa 5% sự lựa chọn hạng ghế của khách hàng có liên quan đến thời gian đặt vé của chuyến bay.
+
+
+### **Kiểm định tính độc lập cho biến Class và Duration_level**
+
+Giả thuyết:
+
+- $H_0$: Hai biến Class và Duration_level độc lập
+
+- $H_1$: Hai biến Class và Duration_level không độc lập
+
+
+```{r}
+chisq.test(table(df$class,df$duration_level))
+```
+
+Kết quả p-value < 2.2e-16 nhỏ hơn rất nhiều so với mức ý nghĩa $\alpha(5\%)$. Nên ta bác bỏ H0. Vậy với mức ý nghĩa 5%, sự lựa chọn hạng ghế của khách hàng có bị ảnh hưởng bởi thời gian bay của chuyến bay.
+
+# **Khoảng ước lượng tỷ lệ **
+
+**Ước lượng tỷ lệ khách hàng chọn hạng vé thương gia và hạng vé phổ thông**
+
+```{r}
+
+Business <- df[df$class == 'Business',]
+prop.test(length(Business$class), length(df$class))
+
+```
+
+Với độ tin cậy 95%, ta có tỷ lệ khách hàng chọn hạng vé thương gia nằm trong khoảng 30.9% cho đến 31.31%. Tỷ lệ khách hàng chọn hạng vé phổ thông nằm trong khoảng còn lại.
+
+
+# **Mô hình hồi quy**
+
+## **Mô hình hồi quy Logistic**
+
+### **Mô hình hồi quy Logistic đơn biến**
+
+**Hồi quy biến Class và Airline **
+
+
+```{r}
+classairline <- glm(factor(class, levels = c("Economy","Business")) ~ airline, family = binomial(link = 'logit'), data = df)
+summary(classairline)
+
+```
+Phương trình hồi quy Logistic của Class và Airline có dạng:
+
+$$
+log(odds) = -0.377664 - 18.188404.AirAsia -18.188404.Gofrist -18.188404.Indigo -18.188404.SpiceJet +0.273063.Vistara
+$$
+
+Giải thích kết quả: 
+
+- Giá trị P-value đối với hãng hàng không mang nhãn hiệu AirAsia, GOFIRST, Indigo, SpiceJet rất lớn nên các hãng hàng không này không có ý nghĩa thống kê trong mô hình.
+
+- Odds của hãng hàng không Vistara bằng 1.31 lần đối với odds của hãng hàng không India
+
+**Đối với chuyến bay mang nhãn hiện là Vistara **
+
+- odds = $e^{-0.377664+0.273063} = 0.9$
+
+-> tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.9 , tức là xác suất khách hàng chọn hạng vé thương gia bé hơn xác suất hành khách chọn hạng vé phổ thông 10% ($1 +0.9 =0.1$) 
+
+- Xác suất khách hàng chọn hạng vé thương gia là 47,4% (tính ra từ phương trình odds = $\frac{\pi}{1-\pi}$)
+
+**Đối với chuyến bay mang nhãn hiệu là India**
+
+- odds = $e^{-0.377664} = 0.685$
+
+-> tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.685 , tức là xác suất khách hàng chọn hạng vé thương gia bé hơn xác suất hành khách chọn hạng vé phổ thông 31.5% ($1- -0.685 =0.315$) 
+
+- Xác suất khách hàng chọn hạng vé thương gia là 40,65% (tính ra từ phương trình odds = $\frac{\pi}{1-\pi}$)
+
+
+> Hãng hàng không Vistara có tỷ lệ khách hàng chọn hạng vé hạng thương gia nhiều hơn so với hãng hàng không India
+
+*Hệ số AIC của mô hình này = 286219*
+
+**Hồi quy biến Class và Source_city **
+
+```{r}
+
+classsource <- glm(factor(class,levels = c("Economy","Business")) ~ source_city, family = binomial(link = 'logit'), data = df)
+unique(df$source_city)
+summary(classsource)
+
+
+```
+Phương trình hồi quy Logistic của Class và Source_city có dạng:
+
+$$
+log(odds) = -0.773129 +0.036523.Chennai -0.080924.Delhi -0.001888.Hyderabad -0.118865.Kolkata +0.047238.Mumbai
+$$
+
+Giải thích kết quả: 
+
+- Giá trị p_value của Hyderabad lớn hơn mức ý nghĩa 0.05 nên biểu hiện này không có ý nghĩa thống kê trong mô hình này.
+
+- Odds của Chennai bằng 1.037 lần odds của Bangalore
+
+- Odds của Delhi bằng 0.92 lần odds của Bangalore
+
+- Odds của Kolkata bằng 0.8879 lần odds của Bangalore
+
+- Odds của Mumbai bằng 1.048 lần odds của Bangalore
+
+**Đối với thành phố Bangalore**
+
+- odds = $e^{-0.773129} = 0.4615$
+
+- tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.4615
+
+- Xác suất khách hàng chọn hạng vé thương gia là 31,57%
+
+**Đối với thành phố Chennai**
+
+- odds = $e^{-0.773129 +0.036523} = 0.4787$
+
+- tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.4787 
+
+- Xác suất khách hàng chọn hạng vé thương gia là 32.37%
+
+**Đối với thành phố Delhi**
+
+- odds = $e^{-0.773129-0.080924} = 0.4256$
+
+- tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.4256
+
+- Xác suất khách hàng chọn hạng vé thương gia là 29,85% 
+
+**Đối với thành phố Kolkata**
+
+- odds = $e^{-0.773129-0.118865} = 0.4098$
+
+- tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.4098
+
+- Xác suất khách hàng chọn hạng vé thương gia là 29,06%
+
+**Đối với thành phố Mumbai**
+
+- odds = $e^{-0.773129-0.047238} = 0.4402$
+
+- tỷ lệ chênh giữa xác suất chọn hạng ghế thương gia và xác suất chọn hạng ghế phổ thông là 0.4402
+
+- Xác suất khách hàng chọn hạng vé thương gia là 30,56%
+
+**Đối với thành phố Bangalore**
+
+- odds = $e^{-0.773129} = 0.4615$
+
+
+> Thành phố Chennai có xác suất chọn hạng vé thương gia là lớn nhất (32.37%), tiếp đến là thành phố bangalore với xác suất là 31,57%, thứ 3 là thành phố Mumabai với xác suất là 30,56%, thành phố helhi có xác suất 29,85% và cuối cùng là thành phố Kolkata có xác suất là 29,06%. Giữa những thành phố này có sự chênh lệch trong xác suất chọn hạng vé thương gia, tuy nhiên sự chênh lệch này không đáng kể
+
+*Hệ số AIC của mô hình này = 372125*
+
+**Hồi quy biến Class và Price_level **
+
+```{r}
+
+classprice <- glm(factor(class,levels = c("Economy","Business")) ~ price_level, family = binomial(link = 'logit'), data = df)
+summary(classprice)
+```
+Kết quả hồi quy mô hình logistic trên cho ta thấy mối quan hệ giữa biến Class và Price_level. 
+
+Phương trình hồi quy Logistic của Class và Price_levels có dạng:
+
+$$
+log(odds) = -4.98768 + 9.15204.Cao
+$$
+
+- Odds của mức giá cao bằng 9433.6 lần so với odds của mức giá thấp.
+
+**Đối với chuyến bay có mức giá cao**
+
+- odds = $e^{-4.98768 + 9.15204} = 64.35$
+
+- Xác suất khách hàng chọn hạng vé thương gia là 98,46%. 
+
+**Đối với chuyến bay có mức giá thấp**
+
+- odds = $e^{-4.98768} = 6,82.10^{-3}$
+
+- Xác suất khách hàng chọn vé thương gia là 1.54%
+
+> Đối với những chuyến bay có mức giá cao, hầu như đều rơi vào hạng vé thương gia. Xác suất vé đó là vé hạng thương gia đối với mức giá cao là 98,46%. 
+
+*Mô hình này có hệ số AIC là 31582*
+
+**Hồi quy biến Class và Stop_ans**
+
+```{r}
+classstopans <- glm(factor(class,levels = c("Economy","Business")) ~ stop_ans, family = binomial(link = 'logit'), data = df)
+summary(classstopans)
+
+```
+Kết quả hồi quy mô hình logistic trên cho ta thấy mối quan hệ giữa biến Class và Stops_ans. 
+
+Phương trình hồi quy Logistic của Class và Stop_ans có dạng:
+
+$$
+log(odds) = -1.23659 + 0.49769.Yes
+$$
+- Odds của chuyến bay có điểm dừng bằng 1.64 lần odds của chuyến bay không có điểm dừng
+
+**Đối với chuyến bay có điểm dừng**
+
+- odds = $e^{-1.23659 + 0.49769} = 0,4776$
+
+- Tỷ lệ giữa xác suất khách chọn hạng ghế thương gia và xác suất khách hàng chọn hạng ghế phổ thông là 0,4776.
+
+- Xác suất khách hàng chọn hạng vé thương gia là 32,32%. 
+
+**Đối với chuyến bay không có điểm dừng**
+
+- odds = $e^{-1.23659} = 0,29$
+
+- Tỷ lệ giữa xác suất khách hàng chọn ghế thương gia và xác suất khách hàng chọn hạng ghế phổ thông là 0,29
+
+- Xác suất khách hàng chọn vé thương gia là 22,48%
+
+> Xác suất chọn hạng vé thương gia của những chuyến bay có điểm dừng (32,32%) cao hơn những chuyến bay không có điểm dừng (22,48%)
+
+*Hệ số AIC của mô hình này là 370852*
+
+**Hồi quy biến Class và day_left**
+
+```{r}
+classdayleft <- glm(factor(class,levels = c("Economy","Business")) ~ days_left, family = binomial(link = 'logit'), data = df)
+summary(classdayleft)
+
+```
+Kết quả hồi quy mô hình logistic trên cho ta thấy mối quan hệ giữa biến Class và days_left
+
+Phương trình hồi quy Logistic của Class và day_left có dạng:
+
+$$
+log(odds) = -0.7394429 -0.0020761.daysleft
+$$
+
+- $\beta = -0.0020761$ thể hiện sự giảm xác suất "chọn hạng vé thương gia" đối với "số ngày đặt vé trước chuyến bay" cao hơn
+
+- Kết quả này thể hiện: Khi số ngày đặt vé trước chuyến bay tăng lên 1 ngày, thì xác suất "khách hàng chọn ghế hạng thương gia" giảm xuống
+
+- Khi daysleft = 0 thì, $odds = e^{-0.7394429} = 0.4773798$
+
+- Ví dụ: Khi daysleft = 2 thì $odds = e^{-0.7394429 -0.0020761*2= 0.4754017}$, nghĩa là tỷ lệ giữa xác suất "khách hàng chọn hạng vé thương gia" và "khách hàng chọn hạng vé phổ thông" là 0.4754017. Xác suất khách hàng chọn hạng vé thương gia là 32,22%
+
+*Hệ số AIC của mô hình = 372303*
+
+**Hồi quy biến Class và Duration**
+  
+```{r}
+classduration <- glm(factor(class,levels = c("Economy","Business")) ~ duration, family = binomial(link = 'logit'), data = df)
+summary(classduration)
+
+```
+Phương trình hồi quy Logistic của Class và Duration có dạng:
+
+$$
+log(odds) = -1.3103180 +0.0410424.duration
+$$
+
+- $\beta = 0.0410424$ thể hiện sự gia tăng xác suất chọn hạng vé thương gia đối với "thời gian bay" cao hơn
+
+- Kết quả này thể hiện: Khi thời gian bay tăng lên 1 giờ, thì xác suất "khách hàng chọn ghế hạng thương gia" tăng lên
+
+- Khi duration = 0 thì, $odds = e^{-1.3103180}=0.2697343$
+
+- Ví dụ: Khi duration = 1 thì $odds = e^{-1.3103180+0.0410424} = 0.2810351$, nghĩa là tỷ lệ giữa xác suất "khách hàng chọn hạng vé thương gia" và "khách hàng chọn hạng vé phổ thông" là 0.2810351. Xác suất khách hàng chọn hạng vé thương gia là 21,94%
+
+*Hệ số AIC của mô hình = 366654*
+
+### **Mô hình Logistic đa biến**
+
+Trước khi chạy mô hình hồi quy đa biến, để khắc phục hiện tượng đa cộng tuyến giữa các biến độc lập trong mô hình, chúng tôi thực hiện biện pháp xoá bỏ các yếu tố ngoại lai có trong biến price. Sau khi xoá bỏ các yếu tố đó, thực hiện chia tập dữ liệu thành hai phần: phần thứ nhất để huấn luyện mô hình, phần thứ hai dùng để dự báo và kiểm tra mô hình có hoạt động hiệu quả không. Các biến được sử dụng trong mô hình là: Class, Price, Stops, Day_left, Duration. Trong đó, Class là biến phụ thuộc và các biến còn lại là biến độc lập.
+
+**Xử lý outliers**
+
+```{r}
+summary(df$price)
+z_scores <- scale(df$price)
+outliers <- which(abs(z_scores) > 3)
+outliers # id (indices) của ouliers 
+df_cleaned <- df %>% filter(!row_number() %in% outliers)
+boxplot(df_cleaned$price)
+summary(outliers)
+
+```
+
+**Mô hình hồi quy đa biến bao gồm:** 
+
+- Biến phụ thuộc: Class
+- Biến độc lập: price_level, stop_ans,day_left, duration
+
+**Hồi quy biến Class, Price_level, Duration, Stop_ans, Day_left **
+
+```{r}
+set.seed(123)  # Trả về giá trị cố định sau mỗi lần lấy mẫu
+
+train_index <- createDataPartition(df_cleaned$class, p = 0.8, list = FALSE, times = 1)
+
+# Tạo tập train và test từ chỉ số đã chọn
+train_data <- df_cleaned[train_index, ]
+test_data <- df_cleaned[-train_index, ]
+classalllogistic1 <- glm(factor(class,levels = c("Economy","Business")) ~  price + stops + duration +days_left, family = binomial(link = 'logit'), data = train_data)
+summary(classalllogistic1)
+
+
+
+
+```
+
+
+$$
+log(odds) = (-1,417e+01) +  (8,029e-04).price - 6,621e.stopsone -9,181e.stopstwoormore -(1,961e-01).duration +(1,421e-01).daysleft
+$$
+
+**Giải thích kết quả**
+
+- Trong trường hợp các yếu tố khác không đổi, giá trị $\beta_1 =(8,029e-04)$ thể hiện khi giá vé máy bay tăng lên 1000 đồng thì odds tăng lên 1.000803 lần.
+
+- Trong trường hợp các yếu tố khác không đổi, giá trị $\beta_2 = - 6,621e$ thể hiện xác suất chọn vé hạng thương gia của những chuyến bay có một điểm dừng bé hơn những chuyến bay không có điểm dừng. Odds của những chuyến bay có 1 điểm dừng bằng 0.001332098 lần odds của những chuyến bay không điểm dừng
+
+- Trong trường hợp các yếu tố khác không đổi, giá trị $\beta_3 = -9,181e$ thể hiện xác suất chọn vé hạng thương gia của những chuyến bay có "lớn hơn hoặc bằng 2" điểm dừng bé hơn những chuyến bay không có điểm dừng. Odds của những chuyến bay có "lớn hơn hoặc bằng 2" điểm dừng bằng 0.0001029775 lần odds của những chuyến bay không điểm dừng
+
+- Trong trường hợp các yếu tố khác không đổi, giá trị $\beta_4 = -(1,961e-01)$ thể hiện: khi thời gian bay tăng lên 1 giờ thì odds giảm 0.82193 lần
+
+- Trong trường hợp các yếu tố khác không đổi, giá trị  $\beta_5 =  1.421e-01$ thể hiện: khi thời gian đặt vé trước chuyến bay tăng lên một ngày thì odds tăng lên 1.152692 lần.
+
+**Khoảng tin cậy cho hệ số hồi quy**
+
+```{r,warning=FALSE}
+confint(classalllogistic1)
+
+```
+
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến Price là [-1.488758e+01;-1.349944e+01]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biểu hiện stopsone trong biến stops là [7.675913e-04;-6.161869e+00]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến stopstwo_or_more là [-1.009982e+01;-8.315310e+00]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến duration là [-2.202149e-01;-1.723210e-01]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến days_left là [1.299964e-01;1.548736e-01]
+
+## **Mô hình Probit đa biến **
+
+```{r}
+classallprobit1 <- glm(factor(class,levels = c("Economy","Business")) ~  price + stops + duration +days_left, family = binomial(link = 'probit'), data = train_data)
+summary(classallprobit1)
+
+```
+Phương trình hồi quy:
+$$Probit(P(y = \text{Business})) = -7.069 + 3.988 \times 10^{-4} \cdot \text{price} - 0.09135 \cdot \text{duration} - 3.419 \cdot \text{stops}_{\text{one}} - 4.458 \cdot \text{stops}_{\text{two_or_more}} + 0.07081 \cdot \text{days_left}$$
+
+Hay viết các khác: $$\pi(y=Business)=\Phi(-7.069 + 3.988 \times 10^{-4} \cdot \text{price} - 0.09135 \cdot \text{duration} - 3.419 \cdot \text{stops}_{\text{one}} - 4.458 \cdot \text{stops}_{\text{two_or_more}} + 0.07081 \cdot \text{days_left})$$
+
+**Đối với chuyến bay không có điểm dừng**
+
+$$\pi(y=Business)=\Phi(-7.069 + 3.988 \times 10^{-4} \cdot \text{price} - 0.09135 \cdot \text{duration} + 0.07081 \cdot \text{days_left})$$
+**Đối với chuyến bay có một điểm dừng**
+
+$$\pi(y=Business)=\Phi(-7.069 + 3.988 \times 10^{-4} \cdot \text{price} - 0.09135 \cdot \text{duration} - 3.419+ 0.07081 \cdot \text{days_left})$$
+**Đối với chuyến bay có hai hoặc nhiều hơn hai điểm dừng**
+
+$$\pi(y=Business)=\Phi(-7.069 + 3.988 \times 10^{-4} \cdot \text{price} - 0.09135 \cdot \text{duration} - 4.458 + 0.07081 \cdot \text{days_left})$$
+
+
+>Như vậy, đối với chuyến bay không có điểm dừng thì xác xuất chọn vé máy bay hạng thương gia sẽ cao hơn là chuyến bay có một điểm dừng, xác suất chọn vé máy bay hạn thương gia có một điểm dừng nhiều hơn xác suất chọn vé máy bay có hai hoặc nhiều hơn hai điểm dừng.
+
+>Giá vé càng cao thì xác suất để chuyến bay là hạng thương gia càng lớn (hệ số 3.988.10^{-4})
+
+>Thời gian chuyến bay dài hơn, thì xác suất chọn vé máy bay là thương gia lại giảm xuống.(hệ số −0.09135)
+
+>Số ngày còn lại trước chuyến bay càng ít thì xác suất chọn vé hạng thương gia giảm.(hệ số 0.07081)
+
+
+**Khoảng tin cậy cho hệ số hồi quy**
+
+```{r,warning=FALSE}
+confint(classallprobit1)
+
+```
+
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến Price là [0.0003780374;0.0004091837]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biểu hiện stopsone trong biến stops là [-3.5826624383 -3.1437958687]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến stopstwo_or_more là [-4.8285430804;-4.0225180056]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến duration là [-0.1029539022;-0.0798413676]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến days_left là [0.0636160057;0.0750291676]
+
+## **Mô hình xác suất tuyến tính đa biến**
+
+### **Mô hình LPM đa biến**
+
+```{r}
+df_cleaned <-df_cleaned %>% mutate(classc = if_else(class =='Economy',0,1))
+set.seed(123) 
+
+train_index_lpm <- createDataPartition(df_cleaned$class, p = 0.8, list = FALSE, times = 1)
+
+
+# Tạo tập train và test từ chỉ số đã chọn
+train_data_lpm <- df_cleaned[train_index_lpm, ]
+test_data_lpm <- df_cleaned[-train_index_lpm, ]
+
+lpm <- glm(classc ~ price + stops + airline + duration +days_left, data=train_data_lpm)
+
+summary(lpm)
+
+```
+
+   Ta có phương trình kết quả ước lượng phương trình xác suất tuyến tính :
+
+$$ \hat{\pi}= 0.0437 +1.973.10^{-5}.Price-0.1511.Stopsone-0.2288.\text{stopstwo_or_more}-0.04195.airlineAirAsia-0.07984.\text{airlineGO_FIRST}-0.093.airlineIndigo-0.09769.airlineSpiceJet-0.0691.airlineVistara+0.002496\text{days_left}-0.001423duration$$
+
+ Trong biến về các hãng bay, ta có biến tham chiếu là hãng Air_India ta có ý nghĩa các hệ số của từng biến giả như sau:
+
+- Hệ số của airlineAirAsia: -0.04195 giải thích rằng Khách hàng bay hãng AirAsia có xác suất chọn vé business thấp hơn 0.04195 (4.195%) so với khách hàng bay hãng Air_India 
+
+- Hệ số của airlineGO_FIRST: -0.07984 giải thích rằng Khách hàng bay hãng GO_FIRST có xác suất chọn vé business thấp hơn 0.07984 (7.984%) so với khách hàng bay hãng Air_India. 
+
+- Hệ số của airlineIndigo:-0.093 giải thích rằng Khách hàng bay hãng Indigo có xác suất chọn vé business thấp hơn 0.093 (9.3%) so với khách hàng bay hãng Air_India.
+
+- Hệ số của airlineSpiceJet:-0.09769 giải thích rằng Khách hàng bay hãng SpiceJet có xác suất chọn vé business thấp hơn 0.09769 (9.769%) so với khách hàng bay hãng Air_India. 
+
+- Hệ số của airlineVistara: -0.0691 giải thích rằng Khách hàng bay hãng Vistara có xác suất chọn vé business thấp hơn 0.0691 (6.91%) so với khách hàng bay hãng Air_India. 
+
+Trong biến Stop tức chuyến bay có quá cảnh, ta có biến tham chiếu là "no" tức là chuyến bay không có quá cảnh ta có ý nghĩa các hệ số của từng biến giả như sau:
+
+- Đối với hệ số của biến stopsone : -0.1511 giải thích rằng xác suất chọn vé hạng thương gia của những chuyến bay có một điểm dừng bé hơn 15.11% so với xác suất chọn vé hạng thương gia của những chuyến bay không có điểm dừng.
+
+- Đối với hệ số của biến stopstwo_or_more : -0.2288 giải thích rằng xác suất chọn vé hạng thương gia của những chuyến bay có từ hai điểm quá cảnh bé hơn 22.88% so với xác suất chọn vé hạng thương gia của những chuyến bay không có điểm dừng.
+
+- Đối với hệ số của biến price : $1.973*10^{-5}$ cho thấy rằng nếu giá vé tăng thêm 1 ngàn đồng , xác suất chọn vé hạng thương gia tăng 0.001973% 
+
+- Đối với hệ số của biến days_left:  0.002496, cho thấy rằng nếu thời gian đặt vé trước chuyến bay tăng thêm 1 ngày , xác suất chọn vé hạng thương gia tăng 0.2496%
+
+- Đối với hệ số của biến duration: -0.001423 cho thấy rằng nếu thời gian bay tăng thêm 1 giờ, xác suất chọn vé hạng thương gia giảm 0.1423%
+
+**Khoảng tin cậy cho hệ số hồi quy**
+
+```{r, warning=FALSE}
+confint(lpm)
+
+```
+
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến Price là [0.00001970163, 0.00001975926]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến stopsone là [-0.1531083, -0.1489988]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến stopstwo_or_more là [-0.2321483, -0.2253627]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến airlineAirAsia là [-0.04473587, -0.03915422]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến airlineGO_FIRST là  [-0.08227807, -0.07741183] 
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến airlineIndigo là [-0.09509114, -0.09091550]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến airlineSpiceJet là [-0.1011520, -0.09423499]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến airlineVistara là [-0.07051728, -0.06769086]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến duration là  [-0.001524650, -0.001321716]
+- Với mức ý nghĩa 5%, khoảng tin cậy cho hệ số của biến days_left là [0.002454439, 0.002537931]
+
+## **Các tiêu chí đánh giá mô hình**
+
+### **Chỉ số AIC**
+
+Mô hình Logistic đa biến: 1753.8
+Mô hình Probit đa biến: 1758.9
+Mô hình LPM đa biến: -261057
+Dựa theo chỉ số AIC của mô hình thì mô hình LPM là mô hình tốt nhất
+
+### **Đánh giá mô hình: Ma trận nhầm lẫn**
+
+Trong phần này chúng tôi sử dụng đường cong ROC để xác định ngưỡng tối ưu để phân loại hai hạng vé từ mô hình dự đoán. Sau đó lập ma trận nhầm lẫn của giá trị dự đoán và giá trị thực tế của ba mô hình hồi quy.
+
+**Mô hình Logistic**
+
+```{r}
+predictlogit <- predict.glm(classalllogistic1, newdata = test_data, type="response")
+
+# Tạo đối tượng ROC
+roc_curve <- roc(test_data$class, predictlogit)
+
+# Vẽ đường cong ROC
+plot(roc_curve, main="ROC Curve", col="blue")
+
+# Tính toán AUC
+
+auc_value <- auc(roc_curve)
+auc_value #Một trong những chỉ số đánh giá mô hình 
+
+# Tính toán ngưỡng tối ưu dựa trên Youden's J statistic
+
+coords <- coords(roc_curve, "best", ret = "threshold")
+optimal_threshold <- coords$threshold
+optimal_threshold
+
+
+predictedlogit <- ifelse(predictlogit >  0.3159721, "Business", "Economy")
+
+# Tạo confusion matrix để đánh giá hiệu suất
+confusion_matrix <- table(Predicted = predictedlogit, Actual = test_data$class)
+addmargins(confusion_matrix)
+confusionMatrix(table(Predicted = predictedlogit, Actual = test_data$class))
+
+```
+- Giá trị Accuracy =  $\frac{\mathrm{18562+41288} }{59910}=99.9%$
+- Giá trị Sensitivity =  $\frac{\mathrm{18562} }{18577}=99.9%$
+- Giá trị Specificity =  $\frac{41288}{41333}=99.89%$
+
+
+**Mô hình Probit**
+
+
+```{r}
+predictprobit <- predict.glm(classallprobit1, newdata = test_data, type="response")
+
+# Tạo đối tượng ROC
+roc_curve_probit <- roc(test_data$class, predictprobit)
+
+# Vẽ đường cong ROC
+plot(roc_curve_probit, main="ROC Curve Probit", col="blue")
+
+# Tính toán AUC
+
+auc_value_probit <- auc(roc_curve_probit)
+auc_value_probit #Một trong những chỉ số đánh giá mô hình 
+
+# Tính toán ngưỡng tối ưu dựa trên Youden's J statistic
+
+coords_probit <- coords(roc_curve_probit, "best", ret = "threshold")
+optimal_threshold_probit <- coords$threshold
+optimal_threshold_probit
+
+
+predictedprobit <- ifelse(predictprobit >  0.3159721, "Business", "Economy")
+
+# Tạo confusion matrix để đánh giá hiệu suất
+confusion_matrix_probit <- table(Predicted = predictedprobit, Actual = test_data$class)
+addmargins(confusion_matrix_probit)
+confusionMatrix(table(Predicted = predictedprobit, Actual = test_data$class))
+
+```
+
+**Mô hình LPM**
+
+```{r}
+
+predictlpm <- predict.glm(lpm, newdata = test_data, type="response")
+# Tạo đối tượng ROC
+roc_curve_lpm <- roc(test_data$class, predictlpm)
+
+# Vẽ đường cong ROC
+plot(roc_curve_lpm, main="ROC Curve LPM", col="blue")
+
+# Tính toán AUC
+
+auc_value_lpm <- auc(roc_curve_lpm)
+auc_value_lpm #Một trong những chỉ số đánh giá mô hình 
+
+# Tính toán ngưỡng tối ưu dựa trên Youden's J statistic
+
+coords_lpm <- coords(roc_curve_lpm, "best", ret = "threshold")
+optimal_threshold_lpm <- coords$threshold
+optimal_threshold_lpm
+
+
+predictedlpm <- ifelse(predictlpm >  0.3159721, "Business", "Economy")
+
+# Tạo confusion matrix để đánh giá hiệu suất
+confusion_matrix_lpm <- table(Predicted = predictedlpm, Actual = test_data$class)
+addmargins(confusion_matrix_lpm)
+confusionMatrix(table(Predicted = predictedlpm, Actual = test_data$class))
+
+```
+
+- Giá trị Accuracy =  $\frac{\mathrm{18576+41210} }{59910}=99.79%$
+- Giá trị Sensitivity =  $\frac{\mathrm{18576} }{18577}=99.99%$
+- Giá trị Specificity =  $\frac{ 41210}{41333}=99.7%$
+
+# **Kết luận và kiến nghị**
+
+## **Kết luận**
+
+Bài nghiên cứu đã xác định được các yếu tố ảnh hưởng đến hành vi lựa chọn hạng vé của khách hàng. Từ mô hình phân tích đơn biến của từng yếu tố để xác định sự ảnh hưởng của từng yếu tố đến xác suất chọn hạng vé thương gia của khách hàng, ta thấy được có hai yếu tố ảnh hưởng tích cực đến xác suất này là khoảng thời gian di chuyển của chuyến bay và giá vé. Có hai yếu tố ảnh hưởng tiêu cực là thời gian đặt vé trước chuyến bay, số điểm dừng chân của chuyến bay. Tuy nhiên, khi phân tích đa biến để xem sự ảnh hưởng lẫn nhau của các yếu tố độc lập có ảnh hưởng trực tiếp đến kết quả cuối cùng về xác suất lựa chọn hạng vé thương gia của khách hàng hay không, ta thu được kết quả có sự khác biệt khá quan trọng trong kết quả của mô hình.
+Kết quả từ mô hình Logistic và Probit đa biến cho thấy có bốn yếu tố chính ảnh hưởng đến xác suất lựa chọn hạng vé: giá vé, số điểm dừng của chuyến bay, thời gian di chuyển, và thời gian đặt vé trước chuyến bay. Giá vé và thời gian đặt vé trước chuyến bay có ảnh hưởng tích cực đến xác suất lựa chọn hạng vé thương gia. Ngược lại, số điểm dừng và thời gian di chuyển của chuyến bay lại có ảnh hưởng tiêu cực đến xác suất lựa chọn hạng vé thương gia của khách hàng. Kết quả từ mô hình xác suất tuyến tính cho thấy có năm yếu tố ảnh hưởng đến xác suất chọn hạng vé, bao gồm giá vé, số điểm dừng của chuyến bay, thời gian di chuyển, thời gian đặt vé trước chuyến bay, và hãng hàng không. Tương tự như các mô hình Logistic và Probit, giá vé và thời gian đặt vé trước chuyến bay có ảnh hưởng tích cực đến xác suất chọn hạng vé thương gia, trong khi các yếu tố còn lại có ảnh hưởng tiêu cực đến xác suất chọn hạng vé thương gia của khách hàng.
+Từ các chỉ số được rút ra từ ma trận nhầm lẫn của mô hình cho thấy rằng cả 3 mô hình Logistic, Probit và mô hình xác suất tuyến tính đều hoạt động rất tốt. Kết quả dự báo thể hiện đúng hơn 99% kết quả thực tế.
+
+
+## **Kiến nghị**
+
+Từ kết luận từ bài nghiên cứu về các yếu tố ảnh hưởng đến hành vi lựa chọn hạng vé của khách hàng, tác giả có một số khuyến nghị cho các hãng hàng không nhằm tối ưu hóa việc tiếp cận và thu hút khách hàng trong việc lựa chọn các hạng vé khác nhau.
+ Trước hết, hãng hàng không nên thiết kế các gói giá vé hấp dẫn, đặc biệt là vào các thời điểm có nhu cầu cao hoặc trong các chiến dịch khuyến mãi, các chương trình giảm giá đặc biệt sẽ giúp thu hút thêm nhiều khách hàng đặc biệt là khách hàng ở vé hạng phổ thông.
+Thứ hai, các hãng hàng không cần tăng cường quản lý số điểm dừng chân của chuyến bay. Việc giảm số điểm dừng chân cho các chuyến bay sẽ tăng khả năng lựa chọn hạng vé thương gia của khách hàng. Việc tối ưu hóa thời gian di chuyển của chuyến bay là một yếu tố quan trọng. Cải thiện lộ trình bay để giảm thời gian di chuyển hoặc chọn các đường bay trực tiếp sẽ giúp tiết kiệm thời gian cho hành khách hạng thương gia. Quảng bá các chuyến bay có thời gian di chuyển ngắn hơn cũng là một cách thu hút khách hàng có nhu cầu di chuyển nhanh chóng.
+Thứ ba, các hãng hàng không nên quản lý thời gian đặt vé trước chuyến bay một cách hiệu quả. Khuyến khích khách hàng đặt vé sớm thông qua các chương trình giảm giá hoặc ưu đãi đặc biệt cho những ai đặt vé trước một khoảng thời gian dài sẽ giúp tăng lượng vé bán ra. Đồng thời, tạo ra các gói khuyến mãi cho khách hàng đặt vé vào phút cuối, đảm bảo rằng các gói này vẫn mang lại lợi ích cho việc chọn hạng vé thương gia.
+Thứ tư, cải thiện chất lượng dịch vụ và xây dựng thương hiệu hãng hàng không là một chiến lược không thể thiếu. Hãng hàng không cần đảm bảo cung cấp dịch vụ xuất sắc ở mọi khía cạnh, từ dịch vụ trên máy bay đến dịch vụ khách hàng trước và sau chuyến bay. Xây dựng và duy trì một thương hiệu mạnh mẽ, nhấn mạnh vào chất lượng dịch vụ hạng thương gia và những lợi ích mà khách hàng có thể nhận được khi lựa chọn hạng vé này sẽ giúp tăng cường lòng tin và sự hài lòng của khách hàng. Việc nâng cao trải nghiệm khách hàng bằng cách tạo ra các trải nghiệm độc đáo và đáng nhớ như bữa ăn cao cấp, chỗ ngồi rộng rãi và thoải mái, dịch vụ giải trí cao cấp và dịch vụ hỗ trợ đặc biệt sẽ giúp các hãng bay để lại dấu ấn với khách hàng. Thu thập phản hồi của khách hàng thường xuyên để liên tục cải thiện và tùy chỉnh dịch vụ theo nhu cầu và mong muốn của họ là điều cần thiết.
+Cuối cùng, chiến lược tiếp thị và truyền thông hiệu quả sẽ đóng vai trò quan trọng trong việc thu hút khách hàng chọn hạng vé thương gia. Sử dụng các kênh truyền thông xã hội và các chiến dịch quảng cáo để quảng bá các yếu tố tích cực như giá vé hấp dẫn, thời gian đặt vé linh hoạt và các dịch vụ cao cấp sẽ giúp tiếp cận đúng đối tượng khách hàng mục tiêu. Tạo nội dung tiếp thị nhắm mục tiêu đến nhóm khách hàng có nhu cầu cao về dịch vụ hạng thương gia như doanh nhân, người có thu nhập cao hoặc những người yêu thích du lịch cao cấp cũng là một chiến lược đáng lưu ý.
+Bằng cách thực hiện những khuyến nghị này, các hãng hàng không có thể cải thiện sự hài lòng của khách hàng và tăng khả năng khách hàng chọn hạng vé thương gia, từ đó tối ưu hóa doanh thu và nâng cao vị thế cạnh tranh trên thị trường.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
